@@ -6,6 +6,8 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
 };
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub struct FlashState {
@@ -159,10 +161,15 @@ fn flash_worker(
             },
         );
 
-        let mut erase_child = Command::new(&esptool_path)
-            .args(&erase_args)
+        let mut erase_cmd = Command::new(&esptool_path);
+        erase_cmd.args(&erase_args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        
+        #[cfg(target_os = "windows")]
+        erase_cmd.creation_flags(0x08000000);
+
+        let mut erase_child = erase_cmd
             .spawn()
             .map_err(|e| format!("Erase spawn error: {e}"))?;
 
@@ -246,10 +253,15 @@ fn flash_worker(
         },
     );
 
-    let mut child = Command::new(&esptool_path)
-        .args(&write_args)
+    let mut write_cmd = Command::new(&esptool_path);
+    write_cmd.args(&write_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+        
+    #[cfg(target_os = "windows")]
+    write_cmd.creation_flags(0x08000000);
+
+    let mut child = write_cmd
         .spawn()
         .map_err(|e| format!("Spawn error: {e}"))?;
 
