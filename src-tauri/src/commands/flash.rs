@@ -57,7 +57,6 @@ pub struct FlashStartPayload {
     pub flash_freq: Option<String>,
     pub flash_size: Option<String>,
     pub erase_before: bool,
-    pub verify_after: bool,
     pub items: Vec<FlashItem>,
     pub extra_args: Option<String>,
 }

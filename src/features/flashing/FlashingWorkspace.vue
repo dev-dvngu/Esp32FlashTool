@@ -40,7 +40,6 @@ const handleWrite = async () => {
     flash_freq: store.flashFreq,
     flash_size: store.flashSize !== 'keep' ? store.flashSize : undefined,
     erase_before: store.eraseBefore,
-    verify_after: store.verifyAfter,
     items: enabledItems.map(i => ({ offset: i.offset, file_path: i.filePath })),
     extra_args: store.extraArgs
   };
@@ -166,13 +165,6 @@ const onProfileChange = (e: Event) => {
                  <svg class="absolute w-3 h-3 text-[#121212] opacity-0 peer-checked:opacity-100 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
               <span>Erase before</span>
-            </label>
-            <label class="flex items-center space-x-2 cursor-pointer hover:text-[#e0e0e0] transition-colors group">
-              <div class="relative flex items-center justify-center">
-                 <input type="checkbox" v-model="store.verifyAfter" class="appearance-none w-4 h-4 rounded border-2 border-[#555] checked:bg-[#90caf9] checked:border-[#90caf9] cursor-pointer transition-all peer">
-                 <svg class="absolute w-3 h-3 text-[#121212] opacity-0 peer-checked:opacity-100 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-              </div>
-              <span>Verify</span>
             </label>
           </div>
         </div>

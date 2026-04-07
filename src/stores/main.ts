@@ -51,7 +51,6 @@ export const useMainStore = defineStore('main', {
     flashFreq: '40m',
     flashSize: 'keep',
     eraseBefore: false,
-    verifyAfter: true,
     extraArgs: '',
     flashItems: JSON.parse(JSON.stringify(DEFAULT_ESP32_FILES)) as FlashItem[],
 
@@ -108,7 +107,7 @@ export const useMainStore = defineStore('main', {
     resetDefaultFiles() { this.setProfile(this.chipProfile); },
     saveSettings() {
       try {
-        const s = { port: this.port, baudrate: this.baudrate, chipProfile: this.chipProfile, flashMode: this.flashMode, flashFreq: this.flashFreq, flashSize: this.flashSize, eraseBefore: this.eraseBefore, verifyAfter: this.verifyAfter, extraArgs: this.extraArgs, flashItems: this.flashItems };
+        const s = { port: this.port, baudrate: this.baudrate, chipProfile: this.chipProfile, flashMode: this.flashMode, flashFreq: this.flashFreq, flashSize: this.flashSize, eraseBefore: this.eraseBefore, extraArgs: this.extraArgs, flashItems: this.flashItems };
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
       } catch (e) { console.error(e); }
     },
@@ -117,7 +116,7 @@ export const useMainStore = defineStore('main', {
         const saved = localStorage.getItem(SETTINGS_KEY);
         if (saved) {
           const p = JSON.parse(saved);
-          this.port = p.port || ''; this.baudrate = p.baudrate || '460800'; this.chipProfile = p.chipProfile || 'esp32'; this.flashMode = p.flashMode || 'dio'; this.flashFreq = p.flashFreq || '40m'; this.flashSize = p.flashSize || 'keep'; this.eraseBefore = !!p.eraseBefore; this.verifyAfter = p.verifyAfter !== undefined ? p.verifyAfter : true; this.extraArgs = p.extraArgs || '';
+          this.port = p.port || ''; this.baudrate = p.baudrate || '460800'; this.chipProfile = p.chipProfile || 'esp32'; this.flashMode = p.flashMode || 'dio'; this.flashFreq = p.flashFreq || '40m'; this.flashSize = p.flashSize || 'keep'; this.eraseBefore = !!p.eraseBefore; this.extraArgs = p.extraArgs || '';
           if (p.flashItems) this.flashItems = p.flashItems;
         }
       } catch (e) { console.error(e); }

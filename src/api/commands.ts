@@ -17,7 +17,6 @@ export interface FlashStartPayload {
   flash_freq?: string;
   flash_size?: string;
   erase_before: boolean;
-  verify_after: boolean;
   items: FlashItem[];
   extra_args?: string;
 }

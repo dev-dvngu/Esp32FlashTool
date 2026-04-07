@@ -149,7 +149,7 @@ const handleDownload = async () => {
   if (!finalAddress || finalAddress === '0x') finalAddress = '0x0';
 
   const payload: FlashStartPayload = {
-    port: store.port, baud: parseInt(store.baudrate, 10), flash_mode: store.flashMode, flash_freq: store.flashFreq, flash_size: store.flashSize !== 'keep' ? store.flashSize : undefined, erase_before: false, verify_after: true, items: [{ offset: finalAddress, file_path: currentTab.path }], extra_args: store.extraArgs
+    port: store.port, baud: parseInt(store.baudrate, 10), flash_mode: store.flashMode, flash_freq: store.flashFreq, flash_size: store.flashSize !== 'keep' ? store.flashSize : undefined, erase_before: false, items: [{ offset: finalAddress, file_path: currentTab.path }], extra_args: store.extraArgs
   };
 
   try { await startFlash(payload); } catch (err: any) { store.isBusy = false; store.status = 'error'; store.addLog(`Download failed: ${err}`, "error"); }
