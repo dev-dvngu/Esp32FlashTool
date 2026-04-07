@@ -11,9 +11,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::esptool_version,
+            commands::get_chip_info,
             commands::list_serial_ports,
             commands::flash_start,
-            commands::flash_cancel
+            commands::flash_cancel,
+            commands::erase_flash,
+            commands::read_flash,
+            commands::read_local_file,
+            commands::write_local_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
