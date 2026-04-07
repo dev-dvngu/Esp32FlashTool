@@ -22,14 +22,15 @@ pub fn greet(name: &str) -> String {
     greet::greet(name)
 }
 
+// Chuyển sang async và await để khớp với esptool.rs
 #[tauri::command]
-pub fn esptool_version() -> Result<String, String> {
-    esptool::esptool_version()
+pub async fn esptool_version() -> Result<String, String> {
+    esptool::esptool_version().await
 }
 
 #[tauri::command]
-pub fn get_chip_info(port: String, baud: u32) -> Result<String, String> {
-    esptool::get_chip_info(port, baud)
+pub async fn get_chip_info(port: String, baud: u32) -> Result<String, String> {
+    esptool::get_chip_info(port, baud).await
 }
 
 #[tauri::command]

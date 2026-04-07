@@ -129,7 +129,7 @@ pub fn flash_start(app: AppHandle, payload: FlashStartPayload) -> Result<(), Str
 }
 
 fn handle_stream<R: Read>(mut reader: R, app: AppHandle, is_stderr: bool) {
-    let re = Regex::new(r"\((\d+)\s*%\)").unwrap();
+    let re = Regex::new(r"(\d+)(?:\.\d+)?\s*%").unwrap();
     let mut buffer = [0; 1024];
     let mut line_buffer = Vec::new();
     
@@ -174,7 +174,8 @@ fn flash_worker(
     if payload.erase_before {
         emit(&app, "status_change", &StatusChangeEvent { status: "erasing".into() });
         let mut erase_args = base_args.clone();
-        erase_args.push("erase_flash".into());
+        // v5.x dùng erase-flash thay vì erase_flash
+        erase_args.push("erase-flash".into());
         emit(&app, "log_line", &LogLineEvent {
             text: format!("$ {} {}", esptool_path.display(), erase_args.join(" ")),
             level: "info".into(),
@@ -201,12 +202,32 @@ fn flash_worker(
 
     emit(&app, "status_change", &StatusChangeEvent { status: "writing".into() });
     let mut write_args = base_args;
-    write_args.push("write_flash".into());
-    if let Some(m) = payload.flash_mode.as_ref() { write_args.push("--flash_mode".into()); write_args.push(m.clone()); }
-    if let Some(f) = payload.flash_freq.as_ref() { write_args.push("--flash_freq".into()); write_args.push(f.clone()); }
-    if let Some(s) = payload.flash_size.as_ref() { if s.to_lowercase() != "keep" { write_args.push("--flash_size".into()); write_args.push(s.clone()); } }
-    if payload.verify_after { write_args.push("--verify".into()); }
-    for it in &payload.items { write_args.push(it.offset.clone()); write_args.push(it.file_path.clone()); }
+    // v5.x dùng write-flash thay vì write_flash
+    write_args.push("write-flash".into());
+    
+    // v5.x dùng gạch ngang cho option name
+    if let Some(m) = payload.flash_mode.as_ref() { 
+        write_args.push("--flash-mode".into()); 
+        write_args.push(m.clone()); 
+    }
+    if let Some(f) = payload.flash_freq.as_ref() { 
+        write_args.push("--flash-freq".into()); 
+        write_args.push(f.clone()); 
+    }
+    if let Some(s) = payload.flash_size.as_ref() { 
+        if s.to_lowercase() != "keep" { 
+            write_args.push("--flash-size".into()); 
+            write_args.push(s.clone()); 
+        } 
+    }
+    
+    // Lưu ý: v5.x đã loại bỏ --verify, hash verification luôn được thực hiện mặc định.
+
+    for it in &payload.items { 
+        write_args.push(it.offset.clone()); 
+        write_args.push(it.file_path.clone()); 
+    }
+
     if let Some(extra) = payload.extra_args.as_ref() {
         let extra = extra.trim();
         if !extra.is_empty() { write_args.extend(extra.split_whitespace().map(|s| s.to_string())); }
@@ -293,7 +314,7 @@ fn erase_worker(
 ) -> Result<(), String> {
     emit(&app, "status_change", &StatusChangeEvent { status: "erasing".into() });
     let erase_args: Vec<String> = vec![
-        "--port".into(), payload.port, "--baud".into(), payload.baud.to_string(), "erase_flash".into(),
+        "--port".into(), payload.port, "--baud".into(), payload.baud.to_string(), "erase-flash".into(),
     ];
     emit(&app, "log_line", &LogLineEvent {
         text: format!("$ {} {}", esptool_path.display(), erase_args.join(" ")),

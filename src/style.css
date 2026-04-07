@@ -3,6 +3,33 @@
 @tailwind utilities;
 
 body {
-  @apply bg-gray-900 text-gray-100;
+  @apply bg-[#121212] text-[#e0e0e0];
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* MUI Dark Theme Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #121212;
+}
+::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #616161;
+}
+
+/* GLOBAL DROPBOX FIX: Force dark background and light text for options */
+select option {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+/* Force specific style for Firefox/Chrome standard dropdowns */
+select {
+  color-scheme: dark;
 }

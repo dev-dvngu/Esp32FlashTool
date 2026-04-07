@@ -36,6 +36,7 @@ const DEFAULT_ESP32_FILES: FlashItem[] = [
 ];
 
 let isInitialized = false;
+let timerInterval: any = null;
 
 export const useMainStore = defineStore('main', {
   state: () => ({
@@ -57,6 +58,8 @@ export const useMainStore = defineStore('main', {
     status: 'idle',
     progress: 0,
     isBusy: false,
+    elapsedTime: '00:00:00',
+    startTime: 0,
     logs: [] as LogEntry[],
     activeTab: 'memory',
   }),
@@ -67,6 +70,24 @@ export const useMainStore = defineStore('main', {
     },
     clearLogs() {
       this.logs = [];
+    },
+    startTimer() {
+      this.stopTimer();
+      this.startTime = Date.now();
+      this.elapsedTime = '00:00:00';
+      timerInterval = setInterval(() => {
+        const diff = Date.now() - this.startTime;
+        const h = Math.floor(diff / 3600000).toString().padStart(2, '0');
+        const m = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+        const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+        this.elapsedTime = `${h}:${m}:${s}`;
+      }, 1000);
+    },
+    stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
     },
     setProfile(profile: ChipProfile) {
       this.chipProfile = profile;
@@ -107,11 +128,27 @@ export const useMainStore = defineStore('main', {
 
       await listen('log_line', (event: any) => this.addLog(event.payload.text, event.payload.level));
       await listen('progress', (event: any) => { this.progress = event.payload.percent; });
-      await listen('status_change', (event: any) => { this.status = event.payload.status; });
+      await listen('status_change', (event: any) => { 
+        this.status = event.payload.status;
+        // Logic mới: Kích hoạt timer ngay khi status không phải các trạng thái dừng
+        const stopStates = ['idle', 'done', 'error'];
+        if (!stopStates.includes(this.status)) {
+           if (!timerInterval) {
+              this.isBusy = true;
+              this.startTimer();
+           }
+        }
+      });
       await listen('completed', (event: any) => {
         this.isBusy = false;
-        if (event.payload.success) this.addLog('Operation finished successfully!', 'success');
-        else this.addLog('Operation failed!', 'error');
+        this.stopTimer();
+        if (event.payload.success) {
+          this.status = 'done';
+          this.addLog('Operation finished successfully!', 'success');
+        } else {
+          this.status = 'error';
+          this.addLog('Operation failed!', 'error');
+        }
       });
     }
   }

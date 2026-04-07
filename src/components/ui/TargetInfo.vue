@@ -11,8 +11,6 @@ const getInfo = async () => {
   store.status = 'connecting';
   try {
     const rawInfo = await getChipInfo(store.port, parseInt(store.baudrate, 10));
-    
-    // Regex siêu linh hoạt cho nhiều phiên bản esptool
     const chipTypeMatch = rawInfo.match(/(?:Chip type|Chip is):\s*([^\n\(]+)/i);
     const revMatch = rawInfo.match(/revision\s*([^\s\n,)]+)/i);
     const featuresMatch = rawInfo.match(/Features:\s*([^\n]+)/i);
@@ -26,7 +24,6 @@ const getInfo = async () => {
       crystal: crystalMatch ? crystalMatch[1].trim() : 'N/A',
       features: featuresMatch ? featuresMatch[1].trim() : 'N/A'
     };
-    
     store.addLog("Chip information updated.", "success");
   } catch (e) {
     store.addLog(`Failed to get chip info: ${e}`, 'error');
@@ -45,48 +42,33 @@ const infoFields = [
 </script>
 
 <template>
-  <div class="flex flex-col overflow-hidden shrink-0 shadow-sm border border-[#004bb0] rounded-sm flex-1 min-h-0">
-    <!-- Header -->
-    <div class="bg-[#003b8e] px-3 py-1.5 flex items-center justify-between border-b border-[#004bb0] shrink-0">
+  <div class="flex flex-col overflow-hidden shrink-0 shadow-md border border-[#333333] rounded-lg bg-[#1e1e1e] flex-1 min-h-0">
+    <div class="bg-[#232323] px-4 py-3 flex items-center justify-between border-b border-[#333333] shrink-0">
       <div class="flex items-center space-x-2">
-        <Search class="w-3.5 h-3.5 text-[#a0d030]" />
-        <h3 class="text-[10px] font-bold uppercase tracking-widest text-white">Target information</h3>
+        <Search class="w-4 h-4 text-[#90caf9]" />
+        <h3 class="text-xs font-bold uppercase tracking-wider text-[#e0e0e0]">Target Info</h3>
       </div>
-      <button @click="getInfo" :disabled="store.isBusy || !store.port" class="text-white hover:text-[#a0d030] transition-colors p-0.5">
+      <button @click="getInfo" :disabled="store.isBusy || !store.port" class="text-[#9e9e9e] hover:text-[#90caf9] transition-colors p-1 rounded-full hover:bg-[#333] disabled:opacity-50 outline-none focus:ring-2 focus:ring-[#90caf9]">
         <RefreshCw class="w-3.5 h-3.5" :class="{'animate-spin': store.isBusy && store.status === 'connecting'}" />
       </button>
     </div>
-    
-    <!-- Info Content (Optimized Row Layout) -->
-    <div class="bg-[#001840] p-3 overflow-y-auto custom-scrollbar flex-1">
-      <div v-if="store.chipInfo" class="space-y-1.5 font-mono text-[10px]">
-        
-        <!-- Standard fields in rows -->
-        <div v-for="field in infoFields" :key="field.key" class="flex justify-between items-center border-b border-[#003b8e]/30 pb-1 last:border-0">
-          <span class="text-[#a0d030] uppercase font-bold tracking-tighter opacity-80 shrink-0 mr-4">{{ field.label }}</span>
-          <span class="text-blue-100 font-bold truncate">{{ (store.chipInfo as any)[field.key] }}</span>
+    <div class="p-4 overflow-y-auto custom-scrollbar flex-1 bg-[#1e1e1e]">
+      <div v-if="store.chipInfo" class="space-y-3 font-mono text-[11px]">
+        <div v-for="field in infoFields" :key="field.key" class="flex justify-between items-center border-b border-[#333333] pb-2 last:border-0">
+          <span class="text-[#9e9e9e] uppercase font-bold tracking-tighter shrink-0 mr-4">{{ field.label }}</span>
+          <span class="text-[#e0e0e0] font-medium truncate">{{ (store.chipInfo as any)[field.key] }}</span>
         </div>
-
-        <!-- Features field (Handles long text with wrap) -->
         <div class="flex flex-col pt-1">
-          <span class="text-[#a0d030] uppercase font-bold tracking-tighter opacity-80 mb-1">Features</span>
-          <span class="text-blue-100 leading-tight text-[9px] block bg-[#002a60]/50 p-1.5 rounded-sm border border-[#003b8e]/30">
+          <span class="text-[#9e9e9e] uppercase font-bold tracking-tighter mb-1.5">Features</span>
+          <span class="text-[#b3b3b3] leading-relaxed text-[10px] block bg-[#121212] p-2.5 rounded-md border border-[#333333]">
             {{ store.chipInfo.features }}
           </span>
         </div>
-
       </div>
-      
-      <div v-else class="h-full flex flex-col items-center justify-center text-slate-500 italic text-[9px] opacity-20 py-10">
-        <Search class="w-8 h-8 mb-2" />
+      <div v-else class="h-full flex flex-col items-center justify-center text-[#757575] italic text-[10px] opacity-60 py-8">
+        <Search class="w-8 h-8 mb-3 opacity-50" />
         <span>Click refresh to scan device</span>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: #001840; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #003b8e; border-radius: 2px; }
-</style>
