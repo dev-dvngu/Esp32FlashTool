@@ -41,3 +41,4 @@ dist-ssr
 
 # Sidecar binaries (downloaded at build time)
 src-tauri/binaries/esptool-*
+/target/
