@@ -472,6 +472,15 @@ fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// Closing the window mid-flash must not leave an orphaned esptool on the port.
+impl Drop for FlashApp {
+    fn drop(&mut self) {
+        if let Some(t) = &self.task {
+            t.cancel();
+        }
+    }
+}
+
 impl FlashApp {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.task.is_some();
@@ -1024,6 +1033,8 @@ impl Render for FlashApp {
                     this.open_path(p.clone(), window, cx);
                 }
             }))
+            // Wayland/GNOME gives client-decorated windows no frame: draw our own.
+            .child(TitleBar::new().child(div().text_sm().child("EspFlash Tool")))
             .child(self.render_header(cx))
             .child(body)
             .child(self.render_footer(cx))
