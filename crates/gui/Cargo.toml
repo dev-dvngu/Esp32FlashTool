@@ -1,0 +1,13 @@
+[package]
+name = "espflashtool-gui"
+version.workspace = true
+edition.workspace = true
+description = "EspFlashTool native GUI (GPUI)"
+
+[[bin]]
+name = "espflashtool"
+path = "src/main.rs"
+
+[dependencies]
+flashtool-core = { path = "../core" }
+gpui-kit = "=0.11.0"

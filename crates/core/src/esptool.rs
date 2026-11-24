@@ -227,6 +227,24 @@ pub fn parse_percent(line: &str) -> Option<u8> {
     int.parse::<u8>().ok().filter(|p| *p <= 100)
 }
 
+/// esptool `--chip` name from a connect line: v5 `Connected to ESP32-S3 on ...`,
+/// `Chip type: ESP32-D0WD-V3 (...)`, v4 `Chip is ...` / `Detecting chip type... ESP32`.
+pub fn chip_from_output(line: &str) -> Option<&'static str> {
+    let rest = ["Connected to ", "Chip type:", "Chip is ", "Detecting chip type..."]
+        .iter()
+        .find_map(|p| line.trim().strip_prefix(p))?;
+    let name = rest.split_whitespace().next()?.trim_end_matches(':').to_ascii_uppercase();
+    if name.starts_with("ESP8266") || name.starts_with("ESP8285") {
+        return Some("esp8266");
+    }
+    let variant = name.strip_prefix("ESP32")?;
+    const VARIANTS: &[(&str, &str)] = &[
+        ("-S2", "esp32s2"), ("-S3", "esp32s3"), ("-C2", "esp32c2"), ("-C3", "esp32c3"),
+        ("-C5", "esp32c5"), ("-C6", "esp32c6"), ("-H2", "esp32h2"), ("-P4", "esp32p4"),
+    ];
+    Some(VARIANTS.iter().find(|(v, _)| variant.starts_with(v)).map_or("esp32", |(_, c)| c))
+}
+
 // ---------------------------------------------------------------- discovery
 
 const EXE: &str = if cfg!(windows) { ".exe" } else { "" };
@@ -283,6 +301,15 @@ mod tests {
         assert_eq!(parse_percent("100 %"), Some(100));
         assert_eq!(parse_percent("no progress"), None);
         assert_eq!(parse_percent("%"), None);
+    }
+
+    #[test]
+    fn chip_names() {
+        assert_eq!(chip_from_output("Connected to ESP32-S3 on /dev/ttyACM0:"), Some("esp32s3"));
+        assert_eq!(chip_from_output("Chip type:          ESP32-D0WD-V3 (revision v3.1)"), Some("esp32"));
+        assert_eq!(chip_from_output("Chip is ESP8266EX"), Some("esp8266"));
+        assert_eq!(chip_from_output("Detecting chip type... ESP32-C3"), Some("esp32c3"));
+        assert_eq!(chip_from_output("Writing at 0x1000"), None);
     }
 
     #[test]

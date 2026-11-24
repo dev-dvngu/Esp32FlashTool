@@ -72,6 +72,31 @@ To build and run this application on your local machine:
    npm run tauri build
    ```
 
+## 🧪 Native GUI (GPUI, experimental — `feat/gpui-gui` branch)
+
+A pure-Rust frontend that replaces the WebView. The Tauri app above stays as the legacy build.
+
+- `crates/core` (`flashcore`): UI-agnostic detection, partition tables, esptool runner.
+- `crates/gui`: the GPUI window (`gpui-kit` 0.11).
+
+```bash
+bash scripts/download-esptool.sh        # or set ESPTOOL_PATH / put esptool on PATH
+cargo run -p espflashtool-gui -- path/to/sketch-or-idf-project   # path is optional
+cargo test -p flashtool-core
+```
+
+Drop (or open) any of these and the segment table fills itself:
+
+| Input | Result |
+|---|---|
+| ESP-IDF project / `build/` / `flasher_args.json` | offsets, flash settings and chip from the manifest |
+| Arduino ESP32 sketch / `build/<fqbn>/` / `flash_args` | 4-file layout, chip from `sdkconfig`, optional merged image |
+| Arduino ESP8266 `build/<fqbn>/` or a `.bin` | single image at `0x0` |
+| `partitions.csv` or `partition-table.bin` | bootloader + table + otadata rows, one picker per app/filesystem/nvs partition, siblings auto-filled |
+
+A sketch built for several boards yields one entry per FQBN in the **Build** selector.
+Files are checked against their partition size and for overlaps before flashing.
+
 ## 🤖 Acknowledgements
 
 This project's complex UI restructuring, Rust backend integration, and codebase optimizations were developed with the assistance of an advanced AI coding agent. The AI was instrumental in enforcing strict engineering standards, squashing complex PostCSS and Rust compiler errors, and achieving the final pixel-perfect Material UI dark theme.
