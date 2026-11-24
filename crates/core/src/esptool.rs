@@ -152,6 +152,10 @@ fn run_all(esptool: &Path, cmds: &[(Status, Vec<String>)], task: &Task, sink: &S
 fn run_one(esptool: &Path, args: &[String], task: &Task, sink: &Sink) -> Result<bool, String> {
     let mut cmd = Command::new(esptool);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // No colour codes. (PYTHONUNBUFFERED would be nice but the PyInstaller-frozen
+    // esptool ignores PYTHON* env vars, so buffered stdout can trail stderr on errors.)
+    // ponytail: run under a pty if strict stdout/stderr ordering ever matters.
+    cmd.env("NO_COLOR", "1");
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
@@ -202,19 +206,41 @@ fn pump(mut r: impl Read, is_stderr: bool, sink: &Sink) {
             if line.is_empty() {
                 continue;
             }
-            let text = String::from_utf8_lossy(&line).into_owned();
+            let text = strip_ansi(&String::from_utf8_lossy(&line));
+            line.clear();
             if let Some(p) = parse_percent(&text) {
                 sink(Event::Progress(p));
             }
-            if b == b'\n' {
+            // Colour-only fragments become empty once escapes are stripped.
+            if b == b'\n' && !text.trim().is_empty() {
                 sink(Event::Log { text, error: is_stderr });
             }
-            line.clear();
         }
     }
-    if !line.is_empty() {
-        sink(Event::Log { text: String::from_utf8_lossy(&line).into_owned(), error: is_stderr });
+    let text = strip_ansi(&String::from_utf8_lossy(&line));
+    if !text.trim().is_empty() {
+        sink(Event::Log { text, error: is_stderr });
     }
+}
+
+/// Drop ANSI CSI sequences (`ESC [ ... final-byte`), e.g. colours.
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        if chars.next() == Some('[') {
+            for c in chars.by_ref() {
+                if ('@'..='~').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Integer part of the last `NN.N %` in a line.
@@ -301,6 +327,13 @@ mod tests {
         assert_eq!(parse_percent("100 %"), Some(100));
         assert_eq!(parse_percent("no progress"), None);
         assert_eq!(parse_percent("%"), None);
+    }
+
+    #[test]
+    fn ansi() {
+        assert_eq!(strip_ansi("\x1b[1;31mA fatal error\x1b[0m"), "A fatal error");
+        assert_eq!(strip_ansi("\x1b[0m"), "");
+        assert_eq!(strip_ansi("plain 50%"), "plain 50%");
     }
 
     #[test]

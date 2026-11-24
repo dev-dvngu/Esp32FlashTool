@@ -4,7 +4,7 @@ use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::*;
 
 fn main() {
-    gpui_kit::application().run(move |cx| {
+    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         let options = WindowOptions {
