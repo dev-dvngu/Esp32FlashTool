@@ -137,3 +137,38 @@ fn copy_dir(src: &Path, dst: &Path) {
         }
     }
 }
+
+#[test]
+fn chip_from_image_header() {
+    let d = tmp("hdr");
+    let mut esp32 = vec![0u8; 24];
+    esp32[0] = 0xE9;
+    esp32[8] = 0xEE;
+    esp32[12] = 9; // esp32s3
+    std::fs::write(d.join("a.bin"), &esp32).unwrap();
+    let esp8266 = [0xE9, 2, 3, 0x20, 0x80, 0xF4, 0x10, 0x40, 0, 0xF0, 0x10, 0x40, 0x60, 0x0D, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    std::fs::write(d.join("b.bin"), esp8266).unwrap();
+    assert_eq!(detect(&d.join("a.bin")).unwrap().chip.as_deref(), Some("esp32s3"));
+    assert_eq!(detect(&d.join("b.bin")).unwrap().chip.as_deref(), Some("esp8266"));
+}
+
+#[test]
+fn boot_app0_resolved_from_core_when_output_dir_lacks_it() {
+    let d = tmp("bootapp0");
+    std::fs::create_dir_all(d.join("out")).unwrap();
+    copy_dir(&fx("arduino-esp32/build/esp32.esp32.esp32"), &d.join("out"));
+    std::fs::remove_file(d.join("out/boot_app0.bin")).unwrap();
+    let core = d.join("core");
+    std::fs::create_dir_all(core.join("tools/partitions")).unwrap();
+    std::fs::write(core.join("tools/partitions/boot_app0.bin"), [0u8; 4]).unwrap();
+    std::fs::write(
+        d.join("out/build.options.json"),
+        format!(r#"{{"fqbn":"esp32:esp32:esp32","hardwareFolders":"{}"}}"#, core.display()),
+    )
+    .unwrap();
+    let p = detect(&d.join("out")).unwrap();
+    let ota = p.files.iter().find(|f| f.offset == 0xe000).unwrap();
+    assert_eq!(ota.path.as_deref(), Some(core.join("tools/partitions/boot_app0.bin").as_path()));
+    // bootloader is capped by the table that follows it
+    assert_eq!(p.files[0].max_size, Some(0x7000));
+}

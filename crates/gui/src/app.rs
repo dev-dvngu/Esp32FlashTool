@@ -34,6 +34,7 @@ struct Row {
 
 pub struct FlashApp {
     port: Choice,
+    ports: Vec<String>,
     baud: Choice,
     chip: Choice,
     mode: Choice,
@@ -102,6 +103,7 @@ impl FlashApp {
         });
         let mut app = Self {
             port: choice(&[], "", window, cx),
+            ports: Vec::new(),
             baud: choice(BAUDS, "460800", window, cx),
             chip: choice(CHIPS, "auto", window, cx),
             mode: choice(MODES, "keep", window, cx),
@@ -126,6 +128,20 @@ impl FlashApp {
             _subs: vec![sub],
         };
         app.refresh_ports(window, cx);
+        // Hotplug: rescan when the set of ports changes. ponytail: 1.5 s poll, udev monitor if it ever matters.
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_millis(1500)).await;
+            let names: Vec<String> = flashcore::list_ports().into_iter().map(|p| p.name).collect();
+            let alive = this.update_in(cx, |this, window, cx| {
+                if this.task.is_none() && names != this.ports {
+                    this.refresh_ports(window, cx);
+                }
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
         match esptool::find_esptool() {
             Ok(p) => app.log(format!("esptool: {}", p.display()), false),
             Err(e) => app.log(e, true),
@@ -147,6 +163,7 @@ impl FlashApp {
     fn refresh_ports(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ports = flashcore::list_ports();
         let prev = value(&self.port, cx);
+        self.ports = ports.iter().map(|p| p.name.clone()).collect();
         let names: Vec<SharedString> = ports.iter().map(|p| p.name.clone().into()).collect();
         let pick = prev
             .filter(|p| names.iter().any(|n| n == p))
@@ -424,13 +441,19 @@ fn section_title(text: impl Into<SharedString>, cx: &App) -> Div {
 }
 
 /// Human name of the firmware project: the first ancestor that isn't a build
-/// directory (`build`, `partition_table`, Arduino's `vendor.arch.board`).
+/// directory (`build`, `partition_table`, Arduino's `vendor.arch.board`, or an
+/// `--output-dir build/esp32`). A loose image is named after itself.
 fn project_name(p: &Project) -> String {
+    if p.source == Source::SingleBin {
+        if let Some(stem) = p.origin.file_name().and_then(|n| n.to_str()?.split('.').next()) {
+            return stem.to_owned();
+        }
+    }
     p.origin
         .ancestors()
         .skip(1)
         .filter_map(|d| d.file_name()?.to_str())
-        .find(|n| *n != "build" && *n != "partition_table" && n.matches('.').count() < 2)
+        .find(|n| *n != "build" && *n != "partition_table" && n.matches('.').count() < 2 && !CHIPS.contains(n))
         .unwrap_or("firmware")
         .to_owned()
 }
@@ -491,7 +514,7 @@ impl FlashApp {
                             .icon(IconName::Cpu)
                             .label("Detect")
                             .tooltip("Connect and identify the chip")
-                            .disabled(busy)
+                            .disabled(busy || self.ports.is_empty())
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.start(Op::ChipInfo, window, cx)
                             })),
@@ -614,20 +637,25 @@ impl FlashApp {
                 )
             })
             .collect();
+        // Drawn over the segments so every partition keeps its divider and name;
+        // names only where they fit (~5% of the bar), the rest are in the tooltips.
         let parts = self.partitions.iter().flatten().map(|p| {
+            let w = frac(p.size as u64);
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
                 .left(relative(frac(p.offset as u64)))
-                .w(relative(frac(p.size as u64)))
+                .w(relative(w))
                 .border_l_1()
-                .border_color(theme.border)
+                .border_color(theme.background)
+                .flex()
+                .items_center()
                 .px_1()
                 .text_xs()
-                .text_color(theme.muted_foreground)
+                .text_color(theme.foreground)
                 .overflow_hidden()
-                .child(p.name.clone())
+                .when(w >= 0.05, |el| el.child(div().truncate().child(p.name.clone())))
         });
         v_flex()
             .px_4()
@@ -641,8 +669,8 @@ impl FlashApp {
                     .rounded_md()
                     .overflow_hidden()
                     .bg(theme.muted)
-                    .children(parts)
-                    .children(blocks),
+                    .children(blocks)
+                    .children(parts),
             )
             .child(
                 h_flex()
@@ -744,7 +772,7 @@ impl FlashApp {
                                             .h_full()
                                             .rounded_full()
                                             .w(relative(u))
-                                            .bg(if over { theme.danger } else { seg_color(i) }),
+                                            .bg(if over { theme.danger } else { theme.muted_foreground }),
                                     ),
                                 )
                             }),
@@ -855,7 +883,8 @@ impl FlashApp {
             Some(Status::Error) => (Some(IconName::CircleX), "Failed", theme.danger),
         };
         let secs = self.elapsed.as_secs();
-        let can_program = !self.rows.is_empty() || self.use_merged;
+        let has_port = !self.ports.is_empty();
+        let can_program = has_port && (!self.rows.is_empty() || self.use_merged);
         h_flex()
             .px_4()
             .py_3()
@@ -889,6 +918,7 @@ impl FlashApp {
                         .danger()
                         .icon(IconName::Delete)
                         .label("Erase chip")
+                        .disabled(!has_port)
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.erase(window, cx))),
                 )
                 .child(

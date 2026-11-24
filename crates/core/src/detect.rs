@@ -228,7 +228,7 @@ fn from_flash_args(path: &Path) -> Result<Project, String> {
             let rel = rel.trim();
             files.push(FlashFile {
                 offset,
-                path: Some(dir.join(rel)),
+                path: Some(resolve_arduino(&dir, rel)),
                 label: label_for_file(rel),
                 max_size: None,
                 enabled: true,
@@ -310,7 +310,7 @@ fn single_bin(path: &Path) -> Project {
     Project {
         source: Source::SingleBin,
         origin: path.to_path_buf(),
-        chip: chip_near(&dir),
+        chip: chip_near(&dir).or_else(|| chip_from_image(path)),
         settings: FlashSettings::default(),
         files: vec![FlashFile {
             offset: 0,
@@ -330,6 +330,15 @@ fn single_bin(path: &Path) -> Project {
 /// every app / filesystem / nvs partition nothing is written to yet.
 fn add_partition_slots(p: &mut Project) {
     let Some(parts) = &p.partitions else { return };
+    // Everything below the table (the bootloader) must end before it; the table is 0xC00 max.
+    let table = p.files.iter().find(|f| f.label == "Partition table").map(|f| f.offset);
+    for f in &mut p.files {
+        match table {
+            Some(t) if f.offset == t => _ = f.max_size.get_or_insert(0xC00),
+            Some(t) if f.offset < t => _ = f.max_size.get_or_insert(t - f.offset),
+            _ => {}
+        }
+    }
     for f in &mut p.files {
         if let Some(part) = parts.iter().find(|pt| pt.offset == f.offset) {
             f.max_size.get_or_insert(part.size);
@@ -355,7 +364,7 @@ fn add_partition_slots(p: &mut Project) {
         p.files.push(FlashFile {
             offset: part.offset,
             path: None,
-            label: format!("{} ({kind})", part.name),
+            label: if part.name == kind { part.name.clone() } else { format!("{} ({kind})", part.name) },
             max_size: Some(part.size),
             enabled,
         });
@@ -408,6 +417,48 @@ fn autofill(dir: &Path, files: &mut [FlashFile]) {
 
 /// Chip from `sdkconfig` (Arduino-ESP32 copies it into the build dir), or the
 /// Arduino FQBN: the build dir name (`esp8266.esp8266.nodemcuv2`) or `build.options.json`.
+/// `flash_args` names `boot_app0.bin` but arduino-cli with `--output-dir` doesn't
+/// copy it; it lives in the core's `tools/partitions/` (listed in build.options.json).
+fn resolve_arduino(dir: &Path, rel: &str) -> PathBuf {
+    let local = dir.join(rel);
+    if local.exists() {
+        return local;
+    }
+    fs::read_to_string(dir.join("build.options.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| {
+            v["hardwareFolders"].as_str()?.split(',').map(|hw| Path::new(hw).join("tools/partitions").join(rel)).find(|p| p.exists())
+        })
+        .unwrap_or(local)
+}
+
+/// Chip from an app/bootloader image header. ESP32-family images carry an
+/// extended header: wp_pin (0xEE) at byte 8 and chip id at 12; ESP8266 has none.
+pub fn chip_from_image(path: &Path) -> Option<String> {
+    let mut h = [0u8; 24];
+    std::io::Read::read_exact(&mut fs::File::open(path).ok()?, &mut h).ok()?;
+    if h[0] != 0xE9 {
+        return None;
+    }
+    if h[8] != 0xEE {
+        return Some("esp8266".into());
+    }
+    let chip = match u16::from_le_bytes([h[12], h[13]]) {
+        0 => "esp32",
+        2 => "esp32s2",
+        5 => "esp32c3",
+        9 => "esp32s3",
+        12 => "esp32c2",
+        13 => "esp32c6",
+        16 => "esp32h2",
+        18 => "esp32p4",
+        23 => "esp32c5",
+        _ => return None,
+    };
+    Some(chip.into())
+}
+
 fn chip_near(dir: &Path) -> Option<String> {
     if file_name(dir).starts_with("esp8266.") {
         return Some("esp8266".into());
