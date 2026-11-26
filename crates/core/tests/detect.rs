@@ -163,7 +163,8 @@ fn boot_app0_resolved_from_core_when_output_dir_lacks_it() {
     std::fs::write(core.join("tools/partitions/boot_app0.bin"), [0u8; 4]).unwrap();
     std::fs::write(
         d.join("out/build.options.json"),
-        format!(r#"{{"fqbn":"esp32:esp32:esp32","hardwareFolders":"{}"}}"#, core.display()),
+        // serde_json escapes Windows backslashes, like arduino-cli does
+        serde_json::json!({"fqbn": "esp32:esp32:esp32", "hardwareFolders": core.display().to_string()}).to_string(),
     )
     .unwrap();
     let p = detect(&d.join("out")).unwrap();
