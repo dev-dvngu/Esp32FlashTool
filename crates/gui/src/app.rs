@@ -10,6 +10,7 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
+use crate::keys;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -33,6 +34,10 @@ struct Row {
 }
 
 pub struct FlashApp {
+    focus: FocusHandle,
+    show_help: bool,
+    /// Last path given to `open_path`, for F4 reload.
+    opened: Option<PathBuf>,
     port: Choice,
     ports: Vec<String>,
     baud: Choice,
@@ -101,7 +106,12 @@ impl FlashApp {
                 this.apply_project(i.row, window, cx);
             }
         });
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         let mut app = Self {
+            focus,
+            show_help: false,
+            opened: None,
             port: choice(&[], "", window, cx),
             ports: Vec::new(),
             baud: choice(BAUDS, "460800", window, cx),
@@ -187,14 +197,17 @@ impl FlashApp {
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         match detect::detect_all(&path) {
             Ok(projects) if !projects.is_empty() => {
+                // Reloading the same path keeps the selected build.
+                let keep = if self.opened.as_ref() == Some(&path) { self.current.min(projects.len() - 1) } else { 0 };
+                self.opened = Some(path.clone());
                 let labels: Vec<SharedString> =
                     projects.iter().map(|p| format!("{} · {}", project_name(p), subtitle(p)).into()).collect();
                 self.build.update(cx, |s, cx| {
                     s.set_items(labels, window, cx);
-                    s.set_selected_index(Some(IndexPath::new(0)), window, cx);
+                    s.set_selected_index(Some(IndexPath::new(keep)), window, cx);
                 });
                 self.projects = projects;
-                self.apply_project(0, window, cx);
+                self.apply_project(keep, window, cx);
             }
             Ok(_) => self.log(format!("No ESP build output found in {}", path.display()), true),
             Err(e) => self.log(e, true),
@@ -303,6 +316,17 @@ impl FlashApp {
             baud: value(&self.baud, cx).and_then(|b| b.parse().ok()).unwrap_or(460800),
             chip: value(&self.chip, cx).filter(|c| c != "auto"),
         })
+    }
+
+    fn cancel(&mut self) {
+        if let Some(t) = &self.task {
+            t.cancel();
+        }
+    }
+
+    /// Board-talking shortcuts only fire when idle with a port, same as their buttons.
+    fn can_talk(&self) -> bool {
+        self.task.is_none() && !self.ports.is_empty()
     }
 
     fn program(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -482,6 +506,41 @@ impl Drop for FlashApp {
 }
 
 impl FlashApp {
+    /// F1 cheat-sheet, drawn over the window; click anywhere or Esc/F1 closes it.
+    fn render_help(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        div()
+            .id("help")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.background.opacity(0.7))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.show_help = false;
+                cx.notify();
+            }))
+            .child(
+                v_flex()
+                    .w(px(420.))
+                    .p_5()
+                    .gap_2()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.popover)
+                    .child(div().pb_2().font_weight(FontWeight::SEMIBOLD).child("Keyboard shortcuts"))
+                    .children(keys::TABLE.iter().map(|(k, d)| {
+                        h_flex()
+                            .gap_4()
+                            .text_sm()
+                            .child(div().w(px(150.)).flex_shrink_0().font_family("monospace").text_color(theme.muted_foreground).child(*k))
+                            .child(*d)
+                    })),
+            )
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.task.is_some();
         let theme = cx.theme();
@@ -508,7 +567,7 @@ impl FlashApp {
                                     .small()
                                     .ghost()
                                     .icon(IconName::RefreshCw)
-                                    .tooltip("Rescan ports")
+                                    .tooltip("Rescan ports (F6)")
                                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                         this.refresh_ports(window, cx)
                                     })),
@@ -522,7 +581,7 @@ impl FlashApp {
                             .small()
                             .icon(IconName::Cpu)
                             .label("Detect")
-                            .tooltip("Connect and identify the chip")
+                            .tooltip("Connect and identify the chip (F2)")
                             .disabled(busy || self.ports.is_empty())
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.start(Op::ChipInfo, window, cx)
@@ -537,7 +596,7 @@ impl FlashApp {
                             .small()
                             .icon(IconName::FolderOpen)
                             .label("Open folder")
-                            .tooltip("Sketch, ESP-IDF project or build directory")
+                            .tooltip("Sketch, ESP-IDF project or build directory (F3)")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.prompt_open(true, window, cx)
                             })),
@@ -548,7 +607,7 @@ impl FlashApp {
                             .ghost()
                             .icon(IconName::File)
                             .label("Open file")
-                            .tooltip("flasher_args.json, flash_args, partitions.csv/.bin or a firmware .bin")
+                            .tooltip("flasher_args.json, flash_args, partitions.csv/.bin or a firmware .bin (Shift+F3)")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.prompt_open(false, window, cx)
                             })),
@@ -596,6 +655,7 @@ impl FlashApp {
                             .child(
                                 Switch::new("erase-before")
                                     .label("Erase first")
+                                    .tooltip("Erase the whole chip before writing (F7)")
                                     .checked(self.erase_before)
                                     .on_click(cx.listener(|this, v: &bool, _, cx| {
                                         this.erase_before = *v;
@@ -927,6 +987,7 @@ impl FlashApp {
                         .danger()
                         .icon(IconName::Delete)
                         .label("Erase chip")
+                        .tooltip("Erase the whole flash (F8)")
                         .disabled(!has_port)
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.erase(window, cx))),
                 )
@@ -935,17 +996,14 @@ impl FlashApp {
                         .primary()
                         .icon(IconName::Play)
                         .label("Program")
+                        .tooltip("Write the enabled segments (F5)")
                         .disabled(!can_program)
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.program(window, cx))),
                 )
             })
             .when(busy, |el| {
-                el.child(Button::new("cancel").danger().icon(IconName::Square).label("Cancel").on_click(
-                    cx.listener(|this, _: &ClickEvent, _, _| {
-                        if let Some(t) = &this.task {
-                            t.cancel();
-                        }
-                    }),
+                el.child(Button::new("cancel").danger().icon(IconName::Square).label("Cancel").tooltip("Stop (Esc)").on_click(
+                    cx.listener(|this, _: &ClickEvent, _, _| this.cancel()),
                 ))
             })
     }
@@ -1026,6 +1084,71 @@ impl Render for FlashApp {
         };
         v_flex()
             .size_full()
+            .relative()
+            .key_context(keys::CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &keys::Help, _, cx| {
+                this.show_help = !this.show_help;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &keys::DetectChip, window, cx| {
+                if this.can_talk() {
+                    this.start(Op::ChipInfo, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::OpenFolder, window, cx| {
+                if this.task.is_none() {
+                    this.prompt_open(true, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::OpenFile, window, cx| {
+                if this.task.is_none() {
+                    this.prompt_open(false, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::Reload, window, cx| {
+                if let (None, Some(p)) = (&this.task, this.opened.clone()) {
+                    this.open_path(p, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::Program, window, cx| {
+                if this.can_talk() {
+                    this.program(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::Cancel, _, cx| {
+                if this.show_help {
+                    this.show_help = false;
+                    cx.notify();
+                } else {
+                    this.cancel();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::RescanPorts, window, cx| {
+                if this.task.is_none() {
+                    this.refresh_ports(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::ToggleErase, _, cx| {
+                if this.task.is_none() {
+                    this.erase_before = !this.erase_before;
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::EraseChip, window, cx| {
+                if this.can_talk() {
+                    this.erase(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &keys::ToggleConsole, _, cx| {
+                this.log_open = !this.log_open;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_, _: &keys::Fullscreen, window, _| window.toggle_fullscreen()))
+            .on_action(cx.listener(|this, _: &keys::ClearLog, _, cx| {
+                this.logs.clear();
+                cx.notify();
+            }))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
@@ -1039,5 +1162,6 @@ impl Render for FlashApp {
             .child(body)
             .child(self.render_footer(cx))
             .child(self.render_console(cx))
+            .when(self.show_help, |el| el.child(self.render_help(cx)))
     }
 }

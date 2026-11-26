@@ -97,6 +97,8 @@ Drop (or open) any of these and the segment table fills itself:
 A sketch built for several boards yields one entry per FQBN in the **Build** selector.
 Files are checked against their partition size and for overlaps before flashing.
 
+Keys: **F5** program · **Esc** cancel · **F4** reload after a rebuild · **F2** detect chip · **F8** erase chip · **F1** shows the full list.
+
 ## 🤖 Acknowledgements
 
 This project's complex UI restructuring, Rust backend integration, and codebase optimizations were developed with the assistance of an advanced AI coding agent. The AI was instrumental in enforcing strict engineering standards, squashing complex PostCSS and Rust compiler errors, and achieving the final pixel-perfect Material UI dark theme.

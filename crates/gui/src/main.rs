@@ -1,4 +1,5 @@
 mod app;
+mod keys;
 
 use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::component::TitleBar;
@@ -7,6 +8,7 @@ use gpui_kit::*;
 fn main() {
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
+        keys::bind(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         // Single-window app: closing it quits (gpui keeps running otherwise on Linux).
         cx.on_window_closed(|cx, _| cx.quit()).detach();
