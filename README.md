@@ -97,7 +97,9 @@ Drop (or open) any of these and the segment table fills itself:
 A sketch built for several boards yields one entry per FQBN in the **Build** selector.
 Files are checked against their partition size and for overlaps before flashing.
 
-Keys: **F5** program · **Esc** cancel · **F4** reload after a rebuild · **F2** detect chip · **F8** erase chip · **F1** shows the full list.
+Keys: **F5** program · **Esc** cancel · **F4** reload after a rebuild · **F2** detect chip · **F8** erase chip · **F10** serial monitor · **F1** shows the full list.
+
+Serial monitor: the **Monitor** tab of the console (baud, line ending, send box, Reset board via RTS). Turn on **Monitor after** to open it as soon as a flash succeeds; it releases the port automatically whenever esptool needs it.
 
 ## 🤖 Acknowledgements
 

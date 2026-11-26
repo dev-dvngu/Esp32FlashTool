@@ -1,5 +1,7 @@
 use flashcore::detect::{self, FlashFile, FlashSettings, Project, Source};
 use flashcore::esptool::{self, Conn, Event, Op, Status, Task};
+use flashcore::monitor::{self, Level, MonEvent, Monitor};
+use gpui_kit::component::input::InputEvent;
 use flashcore::partition::{self, Partition};
 use gpui_kit::component::button::*;
 use gpui_kit::component::checkbox::Checkbox;
@@ -25,6 +27,8 @@ const MODES: &[&str] = &["keep", "dio", "dout", "qio", "qout"];
 const FREQS: &[&str] = &["keep", "80m", "40m", "26m", "20m"];
 const SIZES: &[&str] = &["keep", "detect", "1MB", "2MB", "4MB", "8MB", "16MB", "32MB"];
 const MAX_LOG: usize = 3000;
+const MON_BAUDS: &[&str] = &["9600", "57600", "74880", "115200", "230400", "460800", "921600"];
+const ENDINGS: &[&str] = &["LF", "CRLF", "CR", "None"];
 
 type Choice = Entity<SelectState<Vec<SharedString>>>;
 
@@ -54,6 +58,22 @@ pub struct FlashApp {
     merged: Option<PathBuf>,
     use_merged: bool,
     erase_before: bool,
+
+    monitor: Option<Monitor>,
+    /// Bumped on every open/close so a stale reader's `Closed` can't clear a newer monitor.
+    mon_gen: u64,
+    mon_lines: Vec<(SharedString, Level)>,
+    mon_pending: String,
+    mon_baud: Choice,
+    mon_ending: Choice,
+    mon_input: Entity<InputState>,
+    mon_scroll: ScrollHandle,
+    mon_after: bool,
+    mon_paused: bool,
+    tab_monitor: bool,
+    /// Monitor was closed to free the port for a job; reopen when it ends.
+    resume_monitor: bool,
+    job_write: bool,
 
     logs: Vec<(SharedString, bool)>,
     log_scroll: ScrollHandle,
@@ -106,6 +126,12 @@ impl FlashApp {
                 this.apply_project(i.row, window, cx);
             }
         });
+        let mon_input = cx.new(|cx| InputState::new(window, cx).placeholder("Send to device — Enter"));
+        let send_sub = cx.subscribe_in(&mon_input, window, |this, _, ev: &InputEvent, window, cx| {
+            if let InputEvent::PressEnter { .. } = ev {
+                this.send_input(window, cx);
+            }
+        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let mut app = Self {
@@ -127,6 +153,19 @@ impl FlashApp {
             merged: None,
             use_merged: false,
             erase_before: false,
+            monitor: None,
+            mon_gen: 0,
+            mon_lines: Vec::new(),
+            mon_pending: String::new(),
+            mon_baud: choice(MON_BAUDS, "115200", window, cx),
+            mon_ending: choice(ENDINGS, "LF", window, cx),
+            mon_input,
+            mon_scroll: ScrollHandle::new(),
+            mon_after: false,
+            mon_paused: false,
+            tab_monitor: false,
+            resume_monitor: false,
+            job_write: false,
             logs: Vec::new(),
             log_scroll: ScrollHandle::new(),
             log_open: true,
@@ -135,7 +174,7 @@ impl FlashApp {
             task: None,
             started: None,
             elapsed: Duration::ZERO,
-            _subs: vec![sub],
+            _subs: vec![sub, send_sub],
         };
         app.refresh_ports(window, cx);
         // Hotplug: rescan when the set of ports changes. ponytail: 1.5 s poll, udev monitor if it ever matters.
@@ -318,6 +357,123 @@ impl FlashApp {
         })
     }
 
+    // ------------------------------------------------------------ monitor
+
+    fn start_monitor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.monitor.is_some() {
+            return;
+        }
+        let Some(port) = value(&self.port, cx) else { return self.log("Select a serial port first", true) };
+        let baud = value(&self.mon_baud, cx).and_then(|b| b.parse().ok()).unwrap_or(115200);
+        let (tx, rx) = mpsc::channel();
+        match monitor::open(&port, baud, Arc::new(move |e| _ = tx.send(e))) {
+            Ok(m) => self.monitor = Some(m),
+            Err(e) => return self.log(format!("Monitor: {e}"), true),
+        }
+        self.mon_gen += 1;
+        let gen = self.mon_gen;
+        self.push_mon_line(format!("── monitor {port} @ {baud} ──"), Level::Other);
+        self.log_open = true;
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_millis(30)).await;
+            let done = this.update(cx, |this, cx| {
+                let mut done = false;
+                loop {
+                    match rx.try_recv() {
+                        Ok(MonEvent::Data(b)) => this.push_mon_bytes(&b),
+                        Ok(MonEvent::Closed(err)) => {
+                            if this.mon_gen == gen {
+                                this.monitor = None;
+                            }
+                            if let Some(e) = err {
+                                this.push_mon_line(format!("── monitor stopped: {e} ──"), Level::Error);
+                            }
+                            done = true;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            done = true;
+                            break;
+                        }
+                    }
+                }
+                cx.notify();
+                done
+            });
+            if done.unwrap_or(true) {
+                break;
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Blocks until the port is released (≤ ~50 ms).
+    fn stop_monitor(&mut self) {
+        if self.monitor.take().is_some() {
+            self.mon_gen += 1;
+            self.push_mon_line("── monitor closed ──".into(), Level::Other);
+        }
+    }
+
+    fn toggle_monitor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.task.is_some() {
+            return;
+        }
+        if self.monitor.is_some() {
+            self.stop_monitor();
+        } else {
+            self.tab_monitor = true;
+            self.start_monitor(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn reset_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.task.is_some() {
+            return;
+        }
+        self.tab_monitor = true;
+        self.start_monitor(window, cx);
+        if let Some(m) = &self.monitor {
+            m.reset();
+        }
+    }
+
+    fn send_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(m) = &self.monitor else { return };
+        let ending = match value(&self.mon_ending, cx).as_deref() {
+            Some("CRLF") => "\r\n",
+            Some("CR") => "\r",
+            Some("None") => "",
+            _ => "\n",
+        };
+        let text = self.mon_input.read(cx).value().to_string();
+        m.send(format!("{text}{ending}").into_bytes());
+        self.mon_input.update(cx, |s, cx| s.set_value("", window, cx));
+    }
+
+    // ponytail: lossy UTF-8 per chunk; a multibyte char split across reads shows as �.
+    fn push_mon_bytes(&mut self, bytes: &[u8]) {
+        self.mon_pending.push_str(&String::from_utf8_lossy(bytes));
+        while let Some(i) = self.mon_pending.find('\n') {
+            let line: String = self.mon_pending.drain(..=i).collect();
+            let text = esptool::strip_ansi(line.trim_end_matches(['\r', '\n']));
+            let lvl = monitor::level(&text);
+            self.push_mon_line(text, lvl);
+        }
+    }
+
+    fn push_mon_line(&mut self, text: String, lvl: Level) {
+        self.mon_lines.push((text.into(), lvl));
+        if self.mon_lines.len() > MAX_LOG {
+            self.mon_lines.drain(..self.mon_lines.len() - MAX_LOG);
+        }
+        if !self.mon_paused {
+            self.mon_scroll.scroll_to_bottom();
+        }
+    }
+
     fn cancel(&mut self) {
         if let Some(t) = &self.task {
             t.cancel();
@@ -379,6 +535,12 @@ impl FlashApp {
             Ok(t) => t,
             Err(e) => return self.log(e, true),
         };
+        if self.monitor.is_some() {
+            self.stop_monitor();
+            self.resume_monitor = true;
+        }
+        self.job_write = matches!(op, Op::Write { .. });
+        self.tab_monitor = false;
         self.logs.clear();
         self.log_open = true;
         self.progress = 0.;
@@ -429,6 +591,12 @@ impl FlashApp {
                     self.progress = 100.;
                 }
                 self.log(if success { "Finished successfully." } else { "Operation failed." }, !success);
+                // esptool's default `--after hard-reset` already rebooted the board.
+                let after_flash = success && self.job_write && self.mon_after;
+                if after_flash || std::mem::take(&mut self.resume_monitor) {
+                    self.start_monitor(window, cx);
+                    self.tab_monitor |= after_flash && self.monitor.is_some();
+                }
                 return true;
             }
         }
@@ -659,6 +827,16 @@ impl FlashApp {
                                     .checked(self.erase_before)
                                     .on_click(cx.listener(|this, v: &bool, _, cx| {
                                         this.erase_before = *v;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Switch::new("mon-after")
+                                    .label("Monitor after")
+                                    .tooltip("Open the serial monitor when flashing succeeds")
+                                    .checked(self.mon_after)
+                                    .on_click(cx.listener(|this, v: &bool, _, cx| {
+                                        this.mon_after = *v;
                                         cx.notify();
                                     })),
                             )
@@ -1008,17 +1186,39 @@ impl FlashApp {
             })
     }
 
+    fn clear_console(&mut self) {
+        if self.tab_monitor {
+            self.mon_lines.clear();
+            self.mon_pending.clear();
+        } else {
+            self.logs.clear();
+        }
+    }
+
     fn render_console(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        v_flex()
-            .flex_shrink_0()
-            .border_t_1()
-            .border_color(theme.border)
+        let running = self.monitor.is_some();
+        let busy = self.task.is_some();
+        let tab = |id: &'static str, label: &'static str, active: bool, monitor: bool| {
+            Button::new(id)
+                .xsmall()
+                .ghost()
+                .selected(active)
+                .label(if monitor && running { format!("{label} ●") } else { label.to_owned() })
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.tab_monitor = monitor;
+                    this.log_open = true;
+                    cx.notify();
+                }))
+        };
+        let head = h_flex()
+            .px_4()
+            .py_1()
+            .gap_2()
+            .items_center()
             .child(
                 h_flex()
                     .id("console-head")
-                    .px_4()
-                    .py_1()
                     .gap_2()
                     .items_center()
                     .cursor_pointer()
@@ -1031,33 +1231,115 @@ impl FlashApp {
                             .size_3p5()
                             .text_color(theme.muted_foreground),
                     )
-                    .child(section_title("CONSOLE", cx))
-                    .child(div().flex_1())
-                    .child(Button::new("clear-log").xsmall().ghost().label("Clear").on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.logs.clear();
-                            cx.notify();
-                        },
-                    ))),
+                    .child(section_title("CONSOLE", cx)),
             )
-            .when(self.log_open, |el| {
-                el.child(
-                    div()
-                        .id("log")
-                        .h(px(170.))
+            .child(tab("tab-log", "Log", !self.tab_monitor, false))
+            .child(tab("tab-mon", "Monitor", self.tab_monitor, true))
+            .child(div().flex_1())
+            .when(self.tab_monitor, |el| {
+                el.child(Select::new(&self.mon_baud).w(px(100.)).xsmall().disabled(running))
+                    .child(Select::new(&self.mon_ending).w(px(80.)).xsmall())
+                    .child(
+                        Button::new("mon-reset")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::RefreshCw)
+                            .label("Reset board")
+                            .tooltip("Pulse EN via RTS to reboot without flashing")
+                            .disabled(busy || self.ports.is_empty())
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.reset_board(window, cx))),
+                    )
+                    .child(
+                        Button::new("mon-pause")
+                            .xsmall()
+                            .ghost()
+                            .selected(self.mon_paused)
+                            .label(if self.mon_paused { "Resume" } else { "Pause" })
+                            .tooltip("Stop following new output")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.mon_paused = !this.mon_paused;
+                                if !this.mon_paused {
+                                    this.mon_scroll.scroll_to_bottom();
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("mon-toggle")
+                            .xsmall()
+                            .when(running, |b| b.danger())
+                            .when(!running, |b| b.primary())
+                            .icon(if running { IconName::Square } else { IconName::Play })
+                            .label(if running { "Stop" } else { "Start" })
+                            .tooltip("Start / stop the serial monitor (F10)")
+                            .disabled(busy || (!running && self.ports.is_empty()))
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.toggle_monitor(window, cx))),
+                    )
+            })
+            .child(Button::new("clear-log").xsmall().ghost().label("Clear").tooltip("Clear (Ctrl+L)").on_click(
+                cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.clear_console();
+                    cx.notify();
+                }),
+            ));
+
+        let lines = div()
+            .h(px(if self.tab_monitor { 200. } else { 170. }))
+            .px_4()
+            .pb_2()
+            .bg(theme.background)
+            .font_family("monospace")
+            .text_xs()
+            .line_height(rems(1.35));
+        let body = if self.tab_monitor {
+            let color = |l: Level| match l {
+                Level::Error => theme.danger,
+                Level::Warn => theme.warning,
+                Level::Info => theme.success,
+                Level::Other => theme.foreground,
+            };
+            v_flex()
+                .child(
+                    lines
+                        .id("mon")
                         .overflow_y_scroll()
-                        .track_scroll(&self.log_scroll)
+                        .track_scroll(&self.mon_scroll)
+                        .children(self.mon_lines.iter().map(|(t, l)| div().text_color(color(*l)).child(t.clone())))
+                        .when(!self.mon_pending.is_empty(), |el| {
+                            el.child(div().child(esptool::strip_ansi(&self.mon_pending)))
+                        }),
+                )
+                .child(
+                    h_flex()
                         .px_4()
                         .pb_2()
-                        .bg(theme.background)
-                        .font_family("monospace")
-                        .text_xs()
-                        .line_height(rems(1.35))
-                        .children(self.logs.iter().map(|(t, err)| {
-                            div().text_color(if *err { theme.danger } else { theme.muted_foreground }).child(t.clone())
-                        })),
+                        .gap_2()
+                        .child(div().flex_1().child(Input::new(&self.mon_input).small().disabled(!running)))
+                        .child(
+                            Button::new("mon-send")
+                                .small()
+                                .label("Send")
+                                .disabled(!running)
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_input(window, cx))),
+                        ),
                 )
-            })
+                .into_any_element()
+        } else {
+            lines
+                .id("log")
+                .overflow_y_scroll()
+                .track_scroll(&self.log_scroll)
+                .children(self.logs.iter().map(|(t, err)| {
+                    div().text_color(if *err { theme.danger } else { theme.muted_foreground }).child(t.clone())
+                }))
+                .into_any_element()
+        };
+        v_flex()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(theme.border)
+            .child(head)
+            .when(self.log_open, |el| el.child(body))
     }
 }
 
@@ -1146,9 +1428,10 @@ impl Render for FlashApp {
             }))
             .on_action(cx.listener(|_, _: &keys::Fullscreen, window, _| window.toggle_fullscreen()))
             .on_action(cx.listener(|this, _: &keys::ClearLog, _, cx| {
-                this.logs.clear();
+                this.clear_console();
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &keys::ToggleMonitor, window, cx| this.toggle_monitor(window, cx)))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {

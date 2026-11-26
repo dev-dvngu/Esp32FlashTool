@@ -5,7 +5,7 @@ use gpui_kit::{actions, App, KeyBinding};
 actions!(
     flashtool,
     [Help, DetectChip, OpenFolder, OpenFile, Reload, Program, Cancel, RescanPorts, ToggleErase, EraseChip,
-     ToggleConsole, Fullscreen, ClearLog]
+     ToggleConsole, ToggleMonitor, Fullscreen, ClearLog]
 );
 
 pub const CONTEXT: &str = "FlashApp";
@@ -23,6 +23,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("F7", "Toggle “Erase first”"),
     ("F8", "Erase whole chip (asks first)"),
     ("F9", "Show / hide console"),
+    ("F10", "Start / stop serial monitor"),
     ("F11", "Fullscreen"),
     ("Ctrl+L", "Clear console"),
 ];
@@ -45,6 +46,7 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("f7", ToggleErase, c),
         KeyBinding::new("f8", EraseChip, c),
         KeyBinding::new("f9", ToggleConsole, c),
+        KeyBinding::new("f10", ToggleMonitor, c),
         KeyBinding::new("f11", Fullscreen, c),
         KeyBinding::new("ctrl-l", ClearLog, c),
     ]);

@@ -1,5 +1,6 @@
 pub mod detect;
 pub mod esptool;
+pub mod monitor;
 pub mod partition;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
