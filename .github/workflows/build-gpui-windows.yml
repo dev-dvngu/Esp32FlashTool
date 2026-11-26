@@ -1,0 +1,57 @@
+name: Build Windows (GPUI)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/download-esptool.ps1"
+      - ".github/workflows/build-gpui-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test core
+        run: cargo test -p flashtool-core --locked
+
+      - name: Build GUI
+        run: cargo build --release -p espflashtool-gui --locked
+
+      - name: Download esptool
+        run: pwsh scripts/download-esptool.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $dir = "dist/EspFlashTool"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item target/release/espflashtool.exe $dir/
+          # found next to the exe by flashcore::esptool::find_esptool
+          Copy-Item src-tauri/binaries/esptool-x86_64-pc-windows-msvc.exe $dir/esptool.exe
+          Compress-Archive -Path $dir -DestinationPath dist/EspFlashTool-windows-x64.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EspFlashTool-windows-x64
+          path: dist/EspFlashTool/*
+          retention-days: 14
+
+      - name: Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/EspFlashTool-windows-x64.zip
+          draft: true
